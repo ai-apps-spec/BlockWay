@@ -1,0 +1,1120 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Blockway</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #87ceeb; font-family: system-ui, sans-serif; }
+  canvas { display: block; }
+  /* Jogando com mouse: sem ponteiro na tela */
+  body.playing, body.playing * { cursor: none !important; }
+  /* Mira central */
+  #cross { position: fixed; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; pointer-events: none; }
+  #cross::before, #cross::after { content: ""; position: absolute; background: #fff; mix-blend-mode: difference; }
+  #cross::before { left: 9px; top: 0; width: 2px; height: 20px; }
+  #cross::after { top: 9px; left: 0; height: 2px; width: 20px; }
+  /* Barra de blocos */
+  #hotbar { position: fixed; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); left: 50%; transform: translateX(-50%);
+            display: flex; gap: 5px; padding: 5px; background: rgba(0,0,0,.55); border-radius: 8px; }
+  #hotbar { --slot: clamp(26px, calc((100vw - 108px) / 9), 36px); }   /* 8 slots + botão +, cabem em qualquer tela */
+  .slot { flex: 0 0 auto; width: var(--slot); height: var(--slot); border: 2px solid #555; border-radius: 4px; position: relative; background-size: cover; image-rendering: pixelated; }
+  .slot.sel { border-color: #fff; transform: scale(1.12); }
+  #plusSlot { display: flex; align-items: center; justify-content: center; cursor: pointer; border-color: #888; }
+  #plusSlot svg { width: 60%; height: 60%; }
+  /* Inventário */
+  #inv { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.6); z-index: 18; padding: 16px; box-sizing: border-box; }
+  #inv.open { display: flex; }
+  #invBox { position: relative; background: #222; color: #fff; border: 3px solid #fff; border-radius: 8px; padding: 40px 20px 20px; text-align: center; max-width: 100%; box-sizing: border-box; }
+  #invBox h2 { margin: 0 0 14px; font-size: 24px; }
+  #invClose { position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; background: none; border: 2px solid #fff; border-radius: 6px; cursor: pointer; }
+  #invGrid { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; max-width: calc(12 * 44px + 11 * 6px); margin: 0 auto; }   /* até 12 slots por linha */
+  .islot { width: 40px; height: 40px; border: 2px solid #555; border-radius: 4px; background-size: cover; image-rendering: pixelated; cursor: pointer; }
+  .islot:active { border-color: #fff; }
+  .islot.empty { cursor: default; opacity: .45; }
+  .slot span { position: absolute; top: 1px; left: 3px; color: #fff; font-size: 10px; text-shadow: 1px 1px 2px #000; }
+  #name { position: fixed; bottom: calc(70px + env(safe-area-inset-bottom, 0px)); width: 100%; text-align: center; color: #fff; text-shadow: 1px 1px 3px #000; pointer-events: none; }
+  /* Tela inicial */
+  #overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+             background: rgba(0,0,0,.6); color: #fff; cursor: pointer; padding: 20px; box-sizing: border-box; }
+  /* Tela inicial: título no topo, centralizado, e botão Jogar abaixo */
+  #overlay { align-items: flex-start; overflow-y: auto; cursor: default; }
+  #overlay h1 { margin: 6vh 0 24px; font-size: clamp(48px, 12vw, 96px); letter-spacing: 2px; text-shadow: 3px 3px 0 #000; }
+  #playBtn { font-family: inherit; font-size: 28px; padding: 14px 56px; margin-bottom: 28px; color: #fff; background: #4a8c2a; border: 3px solid #fff; border-radius: 6px; cursor: pointer; }
+  #playBtn:active { background: #3a6f20; }
+  /* Botão Como jogar e janela do tutorial */
+  #playBtn, #helpBtn { display: block; margin: 0 auto 14px; }
+  #helpBtn { font-family: inherit; font-size: 22px; padding: 12px 40px; color: #fff; background: #555; border: 3px solid #fff; border-radius: 6px; cursor: pointer; }
+  #helpBtn:active { background: #444; }
+  #help { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.7); z-index: 20; padding: 16px; box-sizing: border-box; }
+  #help.open { display: flex; }
+  /* Fechar fica fixo no canto superior direito, fora da janela (não rola com o conteúdo) */
+  #help #helpClose { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); margin-top: 0; }
+  /* Tela de Configurações */
+  #settings { position: fixed; inset: 0; display: none; z-index: 15; background: rgba(0,0,0,.88); color: #fff; box-sizing: border-box;
+              padding: calc(16px + env(safe-area-inset-top, 0px)) calc(16px + env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px)); }
+  #settings.open { display: block; }
+  #setTitle { margin: 0 0 20px; font-size: 32px; text-align: left; }
+  #setClose { position: absolute; top: calc(12px + env(safe-area-inset-top, 0px)); right: calc(12px + env(safe-area-inset-right, 0px)); width: 44px; height: 44px; padding: 0; display: flex; align-items: center; justify-content: center; background: none; border: 2px solid #fff; border-radius: 6px; cursor: pointer; }
+  #langBtn { display: flex; align-items: center; gap: 10px; padding: 8px 0; background: none; border: none; color: #fff; font-family: inherit; font-size: 22px; cursor: pointer; }
+  #langArrow { transition: transform .2s; }
+  #langBtn.open #langArrow { transform: rotate(180deg); }
+  #langList { display: none; list-style: none; margin: 6px 0 0 32px; padding: 0; }
+  #langList.open { display: block; }
+  #langList li { max-width: 260px; margin: 4px 0; padding: 10px 14px; font-size: 18px; border: 2px solid #555; border-radius: 6px; cursor: pointer; }
+  #langList li.sel { border-color: #8fd35f; background: rgba(143,211,95,.2); }
+  #settings { overflow-y: auto; touch-action: pan-y; }
+  #gfxBtn { display: flex; align-items: center; gap: 10px; padding: 8px 0; background: none; border: none; color: #fff; font-family: inherit; font-size: 22px; cursor: pointer; }
+  #gfxArrow { transition: transform .2s; }
+  #gfxBtn.open #gfxArrow { transform: rotate(180deg); }
+  #gfxList { display: none; list-style: none; margin: 6px 0 0 32px; padding: 0; }
+  #gfxList.open { display: block; }
+  #gfxList li { max-width: 260px; margin: 4px 0; padding: 10px 14px; font-size: 18px; border: 2px solid #555; border-radius: 6px; cursor: pointer; }
+  #gfxList li.sel { border-color: #8fd35f; background: rgba(143,211,95,.2); }
+  #backHome { position: absolute; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); padding: 12px 28px; font-family: inherit; font-size: 20px; color: #fff; background: #555; border: 3px solid #fff; border-radius: 6px; cursor: pointer; }
+  #helpBox { background: #222; color: #fff; border: 3px solid #fff; border-radius: 8px; padding: 20px 24px; width: 100%; max-width: 460px; max-height: 85vh; overflow-y: auto; touch-action: pan-y; text-align: center; cursor: default; }
+  #helpBox h2 { margin: 0 0 12px; font-size: 28px; }
+  #helpBox h3 { margin: 18px 0 8px; font-size: 20px; color: #8fd35f; border-bottom: 1px solid #555; padding-bottom: 6px; }
+  #helpBox ul { list-style: none; margin: 0; padding: 0; }
+  #helpBox li { margin: 6px 0; line-height: 1.4; }
+  #helpClose { font-family: inherit; font-size: 18px; padding: 10px 36px; margin-top: 20px; color: #fff; background: #4a8c2a; border: 2px solid #fff; border-radius: 6px; cursor: pointer; }
+  /* Controles de toque (celular) */
+  body { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  #touchUI { display: none; }
+  body.touch #touchUI { display: block; }
+  #joy { display: none; position: fixed; width: 100px; height: 100px; border-radius: 50%; background: rgba(255,255,255,.2); border: 2px solid rgba(255,255,255,.5); pointer-events: none; }
+  #knob { position: absolute; left: 30px; top: 30px; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.6); }
+  .tbtn { position: fixed; width: 64px; height: 64px; border-radius: 50%; background: rgba(0,0,0,.45); border: 2px solid rgba(255,255,255,.6); color: #fff; font-size: 26px; display: flex; align-items: center; justify-content: center; }
+  #bDown { display: none; right: calc(20px + env(safe-area-inset-right, 0px)); bottom: calc(176px + env(safe-area-inset-bottom, 0px)); }
+  body.touch.fly #bDown { display: flex; }
+  #bJump { right: calc(20px + env(safe-area-inset-right, 0px)); bottom: calc(100px + env(safe-area-inset-bottom, 0px)); }
+  #bPause { left: calc(12px + env(safe-area-inset-left, 0px)); top: calc(12px + env(safe-area-inset-top, 0px)); width: 44px; height: 44px; font-size: 20px; }
+  #overlay p { margin: 6px 0; line-height: 1.5; }
+  /* Botão Idiomas da tela inicial */
+  #homeLangBtn { display: block; margin: 0 auto 14px; font-family: inherit; font-size: 22px; padding: 12px 40px; color: #fff; background: #555; border: 3px solid #fff; border-radius: 6px; cursor: pointer; }
+  #homeLangBtn:active { background: #444; }
+  #langModal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.7); z-index: 20; padding: 16px; box-sizing: border-box; }
+  #langModal.open { display: flex; }
+  #langBox { position: relative; background: #222; color: #fff; border: 3px solid #fff; border-radius: 8px; padding: 44px 24px 20px; width: 100%; max-width: 300px; cursor: default; }
+  #langModalClose { position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; padding: 0; display: flex; align-items: center; justify-content: center; background: none; border: 2px solid #fff; border-radius: 6px; cursor: pointer; }
+  #homeLangList { list-style: none; margin: 0; padding: 0; }
+  #homeLangList li { max-width: 260px; margin: 4px auto; padding: 10px 14px; font-size: 18px; border: 2px solid #555; border-radius: 6px; cursor: pointer; }
+  #homeLangList li.sel { border-color: #8fd35f; background: rgba(143,211,95,.2); }
+</style>
+</head>
+<body>
+<div id="cross"></div>
+<div id="name"></div>
+<div id="hotbar"></div>
+<div id="touchUI">
+  <div id="joy"><div id="knob"></div></div>
+  <div class="tbtn" id="bDown">↓</div>
+  <div class="tbtn" id="bJump">⤒</div>
+  <div class="tbtn" id="bPause"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+</div>
+<div id="overlay"><div>
+  <h1>Blockway</h1>
+  <button id="playBtn">Jogar</button>
+  <button id="helpBtn">Como jogar</button>
+  <button id="homeLangBtn"><span>Idiomas</span></button>
+  <div id="langModal">
+    <div id="langBox">
+      <button id="langModalClose" aria-label="Fechar"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
+      <ul id="homeLangList"><li class="sel">Português BR</li><li>Inglês</li><li>Espanhol</li></ul>
+    </div>
+  </div>
+  <div id="help">
+    <div id="helpBox">
+      <h2>Como jogar</h2>
+      <h3>Computador</h3>
+      <ul>
+        <li>WASD: mover</li>
+        <li>Espaço: pular</li>
+        <li>Mouse: olhar</li>
+        <li>Botão esquerdo (segurar 1 s): destruir</li>
+        <li>Botão direito: colocar</li>
+        <li>1–8 ou roda do mouse: trocar bloco</li>
+        <li>Voar: aperte pular 2 vezes (de novo para parar)</li>
+        <li>Shift: descer ao voar</li>
+        <li>E: abrir inventário</li>
+        <li>Esc: pausar</li>
+      </ul>
+      <h3>Celular</h3>
+      <ul>
+        <li>Arraste à esquerda para andar</li>
+        <li>Arraste à direita para olhar</li>
+        <li>Toque rápido: colocar</li>
+        <li>Segurar 1 s: destruir</li>
+        <li>Voar: aperte pular 2 vezes (de novo para parar)</li>
+        <li>Botão ↓: descer ao voar</li>
+        <li>Botão +: abrir inventário</li>
+      </ul>
+    </div>
+    <button id="helpClose">Fechar</button>
+  </div>
+</div></div>
+
+<div id="inv">
+  <div id="invBox">
+    <button id="invClose" aria-label="Fechar"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
+    <h2>Inventário</h2>
+    <div id="invGrid"></div>
+  </div>
+</div>
+
+<div id="settings">
+  <h2 id="setTitle">Configurações</h2>
+  <button id="setClose" aria-label="Fechar"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round"><path d="M5 5l14 14M19 5L5 19"/></svg></button>
+  <button id="langBtn"><svg id="langArrow" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg><span>Idiomas</span></button>
+  <ul id="langList"><li class="sel">Português BR</li><li>Inglês</li><li>Espanhol</li></ul>
+  <button id="gfxBtn"><svg id="gfxArrow" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 15l6-6 6 6"/></svg><span>Gráficos</span></button>
+  <ul id="gfxList"><li>Baixo</li><li>Médio</li><li class="sel">Alto</li></ul>
+  <button id="backHome">Voltar ao início</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(() => {
+  // ================= CONFIGURAÇÃO DO MUNDO =================
+  const W = 500, D = 500, H = 50;            // largura (x), profundidade (z), altura (y)
+  const world = new Uint8Array(W * D * H); // 0 = ar, 1.. = tipos de bloco
+  const idx = (x, y, z) => x + z * W + y * W * D;
+  const inBounds = (x, y, z) => x >= 0 && x < W && y >= 0 && y < H && z >= 0 && z < D;
+  const getB = (x, y, z) => inBounds(x, y, z) ? world[idx(x, y, z)] : 0;
+  // Para colisão: laterais e piso fora do mundo são "paredes" sólidas
+  const solidAt = (x, y, z) => (x < 0 || x >= W || z < 0 || z >= D || y < 0) ? true : getB(x, y, z) !== 0;
+
+  // Tipos de bloco: nome, cor base, variação de ruído, estilo de padrão
+  const TYPES = [
+    null,
+    { name: 'Grama', c: [88, 148, 56],  v: 22, p: 'noise' },
+    { name: 'Terra', c: [134, 96, 62],  v: 20, p: 'noise' },
+    { name: 'Pedra', c: [125, 125, 128], v: 26, p: 'spots' },
+    { name: 'Madeira', c: [170, 125, 70], v: 12, p: 'planks' },
+    { name: 'Areia', c: [219, 205, 148], v: 12, p: 'noise' },
+    { name: 'TNT', c: [196, 48, 40], v: 14, p: 'tnt' },
+    { name: 'Isqueiro', item: true },                     // item (não é bloco): acende o TNT
+    { name: 'Cascalho', c: [128, 126, 122], v: 28, p: 'gravel' },
+  ];
+
+  // ---------- Texturas procedurais 16x16 (estilo pixel art) ----------
+  function makeCanvas(t) {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 16;
+    const g = cv.getContext('2d');
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      let n = (Math.random() - .5) * t.v * 2;
+      if (t.p === 'spots' && Math.random() < .12) n -= 35;
+      if (t.p === 'planks' && (y % 4 === 3 || (x === 8 && y % 8 < 4))) n -= 40;
+      g.fillStyle = `rgb(${t.c.map(c => Math.max(0, Math.min(255, c + n))).join(',')})`;
+      g.fillRect(x, y, 1, 1);
+    }
+    if (t.p === 'gravel') {                                // pedrinhas claras e escuras
+      for (let k = 0; k < 40; k++) {
+        g.fillStyle = Math.random() < .5 ? 'rgba(40,40,40,.55)' : 'rgba(200,200,200,.5)';
+        g.fillRect((Math.random() * 15) | 0, (Math.random() * 15) | 0, 2, 2);
+      }
+    }
+    if (t.p === 'tnt') {                                   // faixa clara com as letras TNT
+      g.fillStyle = '#e8e4d8'; g.fillRect(0, 5, 16, 7);
+      g.fillStyle = '#222';
+      const L = { T: ['111', '010', '010', '010', '010'], N: ['101', '111', '111', '101', '101'] };
+      'TNT'.split('').forEach((ch, k) => L[ch].forEach((row, ry) => [...row].forEach((v, rx) => {
+        if (v === '1') g.fillRect(2 + k * 4 + rx, 6 + ry, 1, 1);
+      })));
+    }
+    return cv;
+  }
+  // Ícone do isqueiro (pixel art 16x16)
+  function lighterIcon() {
+    const cv = document.createElement('canvas'); cv.width = cv.height = 16;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#3a3a3a'; g.fillRect(0, 0, 16, 16);
+    g.fillStyle = '#c9ccd2'; g.fillRect(5, 6, 6, 9);       // corpo
+    g.fillStyle = '#8f939b'; g.fillRect(5, 6, 1, 9); g.fillRect(10, 6, 1, 9);
+    g.fillStyle = '#6b6f78'; g.fillRect(5, 4, 6, 2);       // tampa
+    g.fillStyle = '#e85d1a'; g.fillRect(7, 1, 2, 3);       // chama
+    g.fillStyle = '#ffd23f'; g.fillRect(7, 2, 1, 2);
+    return cv.toDataURL();
+  }
+  const mats = [], icons = [];
+  TYPES.forEach((t, i) => {
+    if (!t) { mats[i] = null; return; }
+    if (t.item) { mats[i] = null; icons[i] = lighterIcon(); return; }
+    const cv = makeCanvas(t);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.magFilter = tex.minFilter = THREE.NearestFilter; // visual "pixelado"
+    mats[i] = new THREE.MeshBasicMaterial({ map: tex, vertexColors: true });
+    icons[i] = cv.toDataURL();
+  });
+
+  // ---------- Geração procedural do terreno ----------
+  // Ruído com semente fixa (o mesmo mundo a cada abertura): planícies, colinas, montanhas com cristas,
+  // bacias baixas e desertos, em regiões grandes e diferentes entre si (sem repetição).
+  const SEED = 1337;
+  const hash2 = (ix, iz) => {
+    let h = (Math.imul(ix, 374761393) + Math.imul(iz, 668265263) + Math.imul(SEED, 144665)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  };
+  const vnoise = (x, z) => {           // ruído de valor suavizado (0..1)
+    const ix = Math.floor(x), iz = Math.floor(z), fx = x - ix, fz = z - iz;
+    const u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
+    const a = hash2(ix, iz), b = hash2(ix + 1, iz), c = hash2(ix, iz + 1), d = hash2(ix + 1, iz + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  };
+  const fbm = (x, z, oct) => {         // várias camadas de ruído (0..1)
+    let s = 0, amp = 1, tot = 0, f = 1;
+    for (let o = 0; o < oct; o++) { s += vnoise(x * f + o * 31.7, z * f - o * 17.3) * amp; tot += amp; amp *= 0.5; f *= 2; }
+    return s / tot;
+  };
+  const sstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  function column(x, z) {              // altura e blocos de superfície da coluna (x, z)
+    const m = sstep(0.5, 0.66, fbm(x * 0.004, z * 0.004, 2));                                // regiões montanhosas
+    const hillAmp = 1.5 + 5 * sstep(0.42, 0.62, fbm(x * 0.008 + 90, z * 0.008 - 40, 2));     // planície x colinas
+    let h = 15 + 4 * fbm(x * 0.012, z * 0.012, 3) + (fbm(x * 0.04, z * 0.04, 3) - 0.5) * 2 * hillAmp;
+    const r = 1 - Math.abs(2 * fbm(x * 0.012, z * 0.012 + 500, 3) - 1);                      // cristas
+    h += m * (Math.pow(r, 1.6) * 26 + 4);
+    h -= sstep(0.6, 0.7, fbm(x * 0.007 - 300, z * 0.007 + 300, 2)) * 8 * (1 - m);            // bacias baixas
+    h = Math.max(3, Math.min(H - 2, Math.floor(h)));
+    const desert = (1 - m) > 0.7 && fbm(x * 0.006 + 200, z * 0.006 + 200, 2) > 0.63;
+    let top = 1, sub = 2;                                                                    // grama sobre terra
+    if (h >= 30) { top = 3; sub = 3; }                                                       // picos de pedra
+    else if (h >= 22 && m > 0.3) { top = fbm(x * 0.1, z * 0.1, 2) > 0.5 ? 3 : 1; sub = top === 3 ? 3 : 2; } // encostas
+    else if (desert || h <= 7) { top = 5; sub = 5; }                                         // deserto e praias
+    return { h, top, sub };
+  }
+  for (let x = 0; x < W; x++) for (let z = 0; z < D; z++) {
+    const c = column(x, z);
+    for (let y = 0; y <= c.h; y++) {
+      let t = 3;                                   // pedra no fundo
+      if (y >= c.h - 3) t = c.sub;                 // camadas abaixo da superfície
+      if (y === c.h) t = c.top;                    // superfície
+      world[idx(x, y, z)] = t;
+    }
+  }
+
+  // ================= SALVAMENTO AUTOMÁTICO (localStorage) =================
+  // Guarda blocos alterados, idioma, gráficos e bloco selecionado; tudo é gravado sozinho a cada alteração
+  const SAVE_KEY = 'blockway-save-v1';
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SAVE_KEY)) || {}; } catch (e) { saved = {}; }
+  if (!saved.edits) saved.edits = {};
+  // O mundo mudou de tamanho: converte os índices salvos no formato antigo (100x100x24) para o atual
+  {
+    const od = saved.dims || [100, 100, 24];
+    if (od[0] !== W || od[1] !== D || od[2] !== H) {
+      const ne = {};
+      for (const k in saved.edits) {
+        const i = +k, ox = i % od[0], oz = Math.floor(i / od[0]) % od[1], oy = Math.floor(i / (od[0] * od[1]));
+        if (ox < W && oz < D && oy < H) ne[ox + oz * W + oy * W * D] = saved.edits[k];
+      }
+      saved.edits = ne;
+    }
+    saved.dims = [W, D, H];
+    // Novo gerador de terreno: blocos salvos no relevo antigo não combinam mais, então são descartados
+    if (saved.terrain !== 2) { saved.edits = {}; saved.terrain = 2; }
+  }
+  const writeSave = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(saved)); } catch (e) {} };
+  let saveTimer = null;
+  function save() { clearTimeout(saveTimer); saveTimer = setTimeout(writeSave, 300); }   // agrupa gravações próximas
+  addEventListener('pagehide', writeSave);
+  // Reaplica ao terreno gerado os blocos que o jogador quebrou/colocou
+  for (const k in saved.edits) { const i = +k; if (i >= 0 && i < world.length) world[i] = saved.edits[k]; }
+
+  // ================= CENA / RENDERER =================
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x87ceeb);
+  scene.fog = new THREE.Fog(0x87ceeb, 25, 60);
+  const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 200);
+  const renderer = new THREE.WebGLRenderer({ antialias: false });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.setSize(innerWidth, innerHeight);
+  document.body.appendChild(renderer.domElement);
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+
+  // ---------- Construção da malha (só faces expostas = "face culling") ----------
+  // Cada face: vizinho, 4 cantos (anti-horário visto de fora) e brilho (sombreamento falso)
+  const FACES = [
+    { d: [1, 0, 0],  v: [[1,0,1],[1,0,0],[1,1,0],[1,1,1]], b: 0.8 },
+    { d: [-1, 0, 0], v: [[0,0,0],[0,0,1],[0,1,1],[0,1,0]], b: 0.8 },
+    { d: [0, 1, 0],  v: [[0,1,1],[1,1,1],[1,1,0],[0,1,0]], b: 1.0 },
+    { d: [0, -1, 0], v: [[0,0,0],[1,0,0],[1,0,1],[0,0,1]], b: 0.5 },
+    { d: [0, 0, 1],  v: [[0,0,1],[1,0,1],[1,1,1],[0,1,1]], b: 0.9 },
+    { d: [0, 0, -1], v: [[1,0,0],[0,0,0],[0,1,0],[1,1,0]], b: 0.7 },
+  ];
+  const UV = [[0,0],[1,0],[1,1],[0,1]];
+  // ---------- Chunks: o mundo é dividido em pedaços de 16x16 colunas; só os próximos do jogador têm malha ----------
+  const CS = 16, NCX = Math.ceil(W / CS), NCZ = Math.ceil(D / CS);
+  const chunks = new Map();   // chave (cx + cz*NCX) -> lista de malhas do chunk
+
+  function unloadChunk(key) {
+    const ms = chunks.get(key); if (!ms) return;
+    ms.forEach(m => { scene.remove(m); m.geometry.dispose(); });
+    chunks.delete(key);
+  }
+
+  function buildChunk(cx, cz) {
+    const key = cx + cz * NCX;
+    unloadChunk(key);
+    const x0 = cx * CS, z0 = cz * CS, x1 = Math.min(W, x0 + CS), z1 = Math.min(D, z0 + CS);
+    const buf = TYPES.map(() => ({ p: [], u: [], c: [], i: [] }));
+    for (let y = 0; y < H; y++) for (let z = z0; z < z1; z++) for (let x = x0; x < x1; x++) {
+      const t = world[idx(x, y, z)];
+      if (!t) continue;
+      const b = buf[t];
+      for (const f of FACES) {
+        if (getB(x + f.d[0], y + f.d[1], z + f.d[2])) continue; // vizinho sólido: face oculta
+        const base = b.p.length / 3;
+        f.v.forEach((v, k) => {
+          b.p.push(x + v[0], y + v[1], z + v[2]);
+          b.u.push(UV[k][0], UV[k][1]);
+          b.c.push(f.b, f.b, f.b);
+        });
+        b.i.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      }
+    }
+    const ms = [];
+    buf.forEach((b, t) => {
+      if (!t || !b.i.length) return;
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(b.p, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(b.u, 2));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(b.c, 3));
+      g.setIndex(b.i);
+      const m = new THREE.Mesh(g, mats[t]);
+      scene.add(m); ms.push(m);
+    });
+    chunks.set(key, ms);
+  }
+
+  // Após quebrar/colocar um bloco em (x, z): reconstrói só o chunk dele (e o vizinho, se estiver na borda)
+  function rebuild(x, z) {
+    const cx = Math.floor(x / CS), cz = Math.floor(z / CS), lx = x - cx * CS, lz = z - cz * CS;
+    buildChunk(cx, cz);
+    if (lx === 0 && cx > 0 && chunks.has(cx - 1 + cz * NCX)) buildChunk(cx - 1, cz);
+    if (lx === CS - 1 && cx < NCX - 1 && chunks.has(cx + 1 + cz * NCX)) buildChunk(cx + 1, cz);
+    if (lz === 0 && cz > 0 && chunks.has(cx + (cz - 1) * NCX)) buildChunk(cx, cz - 1);
+    if (lz === CS - 1 && cz < NCZ - 1 && chunks.has(cx + (cz + 1) * NCX)) buildChunk(cx, cz + 1);
+  }
+
+  // Carrega os chunks ao redor do jogador (alcance acompanha a névoa) e descarrega os distantes
+  let chunkFirst = true;
+  function updateChunks() {
+    const pcx = Math.floor(player.pos.x / CS), pcz = Math.floor(player.pos.z / CS);
+    const R = Math.ceil(scene.fog.far / CS) + 1;
+    for (const key of [...chunks.keys()]) {
+      const cx = key % NCX, cz = Math.floor(key / NCX);
+      if (Math.abs(cx - pcx) > R + 1 || Math.abs(cz - pcz) > R + 1) unloadChunk(key);
+    }
+    const missing = [];
+    for (let dz = -R; dz <= R; dz++) for (let dx = -R; dx <= R; dx++) {
+      const cx = pcx + dx, cz = pcz + dz;
+      if (cx < 0 || cz < 0 || cx >= NCX || cz >= NCZ || chunks.has(cx + cz * NCX)) continue;
+      missing.push([dx * dx + dz * dz, cx, cz]);
+    }
+    if (!missing.length) return;
+    missing.sort((a, b) => a[0] - b[0]);
+    const budget = chunkFirst ? missing.length : 2;   // 1º quadro: tudo ao redor; depois 2 por quadro
+    for (let i = 0; i < Math.min(budget, missing.length); i++) buildChunk(missing[i][1], missing[i][2]);
+    chunkFirst = false;
+  }
+
+  // Contorno do bloco apontado
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)),
+    new THREE.LineBasicMaterial({ color: 0x000000 }));
+  outline.visible = false; scene.add(outline);
+
+  // ================= JOGADOR =================
+  const player = { pos: new THREE.Vector3(W / 2, H - 1, D / 2), vel: new THREE.Vector3(), onGround: false };
+  const HALF = 0.3, HEIGHT = 1.8, EYE = 1.62;
+  // Coloca o jogador acima do terreno no ponto inicial
+  // Spawn no centro de um bloco e sobe até a caixa do jogador ficar livre (evita nascer preso dentro do terreno)
+  player.pos.set(Math.floor(W / 2) + 0.5, 1, Math.floor(D / 2) + 0.5);
+  while (collides(player.pos) && player.pos.y < H) player.pos.y += 0.5;
+  player.pos.y += 0.01;
+  let yaw = 0, pitch = 0;
+
+  // Testa se a caixa (AABB) do jogador em "p" intersecta algum bloco sólido
+  function collides(p) {
+    const x0 = Math.floor(p.x - HALF), x1 = Math.floor(p.x + HALF);
+    const y0 = Math.floor(p.y),        y1 = Math.floor(p.y + HEIGHT);
+    const z0 = Math.floor(p.z - HALF), z1 = Math.floor(p.z + HALF);
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++)
+      if (solidAt(x, y, z)) return true;
+    return false;
+  }
+
+  // ================= ENTRADA (teclado / mouse / pointer lock) =================
+  const keys = {};
+  const overlay = document.getElementById('overlay');
+  const invEl = document.getElementById('inv');
+  // Janela "Como jogar"
+  const help = document.getElementById('help');
+  document.getElementById('helpBtn').addEventListener('click', () => help.classList.add('open'));
+  document.getElementById('helpClose').addEventListener('click', () => help.classList.remove('open'));
+  help.addEventListener('click', e => { if (e.target === help) help.classList.remove('open'); });
+  // Tela de Configurações (abre pela engrenagem durante o jogo)
+  const settings = document.getElementById('settings');
+  const langBtn = document.getElementById('langBtn'), langList = document.getElementById('langList');
+  const gfxBtn = document.getElementById('gfxBtn'), gfxList = document.getElementById('gfxList');
+  const collapseLang = () => { langBtn.classList.remove('open'); langList.classList.remove('open'); gfxBtn.classList.remove('open'); gfxList.classList.remove('open'); };
+  langBtn.addEventListener('click', () => { langBtn.classList.toggle('open'); langList.classList.toggle('open'); });
+  // Gráficos: resolução (pixel ratio) e distância de visão (névoa/câmera) conforme a opção: 0 = Baixo, 1 = Médio, 2 = Alto
+  const GFX = [
+    { pr: 0.5, fog: [10, 28], far: 34 },
+    { pr: 0.75, fog: [20, 45], far: 55 },
+    { pr: Math.min(devicePixelRatio, 2), fog: [25, 60], far: 200 }
+  ];
+  function setGraphics(level) {
+    const g = GFX[level];
+    renderer.setPixelRatio(g.pr);
+    renderer.setSize(innerWidth, innerHeight);
+    scene.fog.near = g.fog[0]; scene.fog.far = g.fog[1];
+    camera.far = g.far; camera.updateProjectionMatrix();
+  }
+  gfxBtn.addEventListener('click', () => { gfxBtn.classList.toggle('open'); gfxList.classList.toggle('open'); });
+  gfxList.querySelectorAll('li').forEach((li, i) => li.addEventListener('click', () => {
+    gfxList.querySelectorAll('li').forEach(o => o.classList.toggle('sel', o === li));
+    setGraphics(i); saved.gfx = i; save();
+  }));
+  // ===== Idiomas: o texto em português é a base; en/es são traduzidos por correspondência de texto =====
+  const TR = {
+    en: {
+      'Jogar': 'Play', 'Como jogar': 'How to play', 'Idiomas': 'Languages', 'Configurações': 'Settings',
+      'Voltar ao início': 'Back to start', 'Fechar': 'Close', 'Computador': 'Computer', 'Celular': 'Mobile',
+      'WASD: mover': 'WASD: move', 'Espaço: pular': 'Space: jump', 'Mouse: olhar': 'Mouse: look around',
+      'Botão esquerdo (segurar 1 s): destruir': 'Left button (hold 1 s): break', 'Botão direito: colocar': 'Right button: place',
+      '1–8 ou roda do mouse: trocar bloco': '1–8 or mouse wheel: change block',
+      'Voar: aperte pular 2 vezes (de novo para parar)': 'Fly: press jump twice (again to stop)',
+      'Shift: descer ao voar': 'Shift: go down while flying', 'Esc: pausar': 'Esc: pause', 'E: abrir inventário': 'E: open inventory', 'Botão +: abrir inventário': '+ button: open inventory',
+      'Arraste à esquerda para andar': 'Drag on the left to walk', 'Arraste à direita para olhar': 'Drag on the right to look around',
+      'Toque rápido: colocar': 'Quick tap: place', 'Segurar 1 s: destruir': 'Hold 1 s: break',
+      'Botão ↓: descer ao voar': '↓ button: go down while flying',
+      'Português BR': 'Brazilian Portuguese', 'Inglês': 'English', 'Espanhol': 'Spanish',
+      'Grama': 'Grass', 'Terra': 'Dirt', 'Pedra': 'Stone', 'Madeira': 'Wood', 'Areia': 'Sand', 'Cascalho': 'Gravel', 'Isqueiro': 'Lighter', 'Inventário': 'Inventory',
+      'Gráficos': 'Graphics', 'Baixo': 'Low', 'Médio': 'Medium', 'Alto': 'High'
+    },
+    es: {
+      'Jogar': 'Jugar', 'Como jogar': 'Cómo jugar', 'Idiomas': 'Idiomas', 'Configurações': 'Configuración',
+      'Voltar ao início': 'Volver al inicio', 'Fechar': 'Cerrar', 'Computador': 'Computadora', 'Celular': 'Celular',
+      'WASD: mover': 'WASD: moverse', 'Espaço: pular': 'Espacio: saltar', 'Mouse: olhar': 'Ratón: mirar',
+      'Botão esquerdo (segurar 1 s): destruir': 'Botón izquierdo (mantener 1 s): destruir', 'Botão direito: colocar': 'Botón derecho: colocar',
+      '1–8 ou roda do mouse: trocar bloco': '1–8 o rueda del ratón: cambiar de bloque',
+      'Voar: aperte pular 2 vezes (de novo para parar)': 'Volar: presiona saltar 2 veces (otra vez para parar)',
+      'Shift: descer ao voar': 'Shift: bajar al volar', 'Esc: pausar': 'Esc: pausar', 'E: abrir inventário': 'E: abrir inventario', 'Botão +: abrir inventário': 'Botón +: abrir inventario',
+      'Arraste à esquerda para andar': 'Arrastra a la izquierda para caminar', 'Arraste à direita para olhar': 'Arrastra a la derecha para mirar',
+      'Toque rápido: colocar': 'Toque rápido: colocar', 'Segurar 1 s: destruir': 'Mantener 1 s: destruir',
+      'Botão ↓: descer ao voar': 'Botón ↓: bajar al volar',
+      'Português BR': 'Portugués BR', 'Inglês': 'Inglés', 'Espanhol': 'Español',
+      'Grama': 'Hierba', 'Terra': 'Tierra', 'Pedra': 'Piedra', 'Madeira': 'Madera', 'Areia': 'Arena', 'Cascalho': 'Grava', 'Isqueiro': 'Encendedor', 'Inventário': 'Inventario',
+      'Gráficos': 'Gráficos', 'Baixo': 'Bajo', 'Médio': 'Medio', 'Alto': 'Alto'
+    }
+  };
+  const LANGS = ['pt', 'en', 'es'], HTML_LANG = { pt: 'pt-BR', en: 'en', es: 'es' };
+  let lang = 'pt';
+  const tr = s => (lang === 'pt' ? s : (TR[lang][s] || s));
+  const homeLangBtn = document.getElementById('homeLangBtn'), homeLangList = document.getElementById('homeLangList');
+  // Janela pequena de idiomas da tela inicial
+  const langModal = document.getElementById('langModal');
+  homeLangBtn.addEventListener('click', () => langModal.classList.add('open'));
+  document.getElementById('langModalClose').addEventListener('click', () => langModal.classList.remove('open'));
+  langModal.addEventListener('click', e => { if (e.target === langModal) langModal.classList.remove('open'); });
+  const langItems = [...langList.querySelectorAll('li'), ...homeLangList.querySelectorAll('li')];
+  const i18nEls = [...document.querySelectorAll('#playBtn, #helpBtn, #helpBox h2, #helpBox h3, #helpBox li, #helpClose, #setTitle, #backHome, #langBtn span, #homeLangBtn span, #langList li, #homeLangList li, #gfxBtn span, #gfxList li, #invBox h2')];
+  function applyLang(code) {
+    lang = code;
+    document.documentElement.lang = HTML_LANG[code];
+    i18nEls.forEach(el => {
+      if (!el.dataset.pt) el.dataset.pt = el.textContent;   // guarda o texto original em português
+      el.textContent = tr(el.dataset.pt);
+    });
+    document.getElementById('setClose').setAttribute('aria-label', tr('Fechar'));
+    document.getElementById('langModalClose').setAttribute('aria-label', tr('Fechar'));
+    document.getElementById('invClose').setAttribute('aria-label', tr('Fechar'));
+    select(sel);                                            // atualiza o nome do bloco na tela
+  }
+  langItems.forEach(li => li.addEventListener('click', () => {
+    const code = LANGS[[...li.parentNode.children].indexOf(li)];
+    langItems.forEach(o => o.classList.toggle('sel', LANGS[[...o.parentNode.children].indexOf(o)] === code));
+    applyLang(code); saved.lang = code; save();
+  }));
+  document.getElementById('setClose').addEventListener('click', () => { collapseLang(); settings.classList.remove('open'); locked = true; });
+  document.getElementById('backHome').addEventListener('click', () => { collapseLang(); settings.classList.remove('open'); overlay.style.display = 'flex'; });
+  const cvs = renderer.domElement;
+  let locked = false;
+  // Dispositivo de toque (celular/tablet): não há pointer lock, então o jogo começa direto ao tocar
+  let isTouch = matchMedia('(hover: none) and (pointer: coarse)').matches;
+  // Tablet/notebook com mouse e teclado: segue o último tipo de entrada usado. Com mouse, trava o ponteiro
+  // (ponteiro some e a câmera gira sem limite de tela); com toque, usa os controles de toque.
+  addEventListener('pointerdown', e => {
+    isTouch = e.pointerType !== 'mouse';
+    document.body.classList.toggle('touch', isTouch && locked);
+    if (!isTouch && locked && !document.pointerLockElement && !invEl.classList.contains('open')) cvs.requestPointerLock();
+  }, true);
+  document.getElementById('playBtn').addEventListener('click', () => {
+    try { window.focus(); } catch (e) {}      // garante que o teclado (inclusive Bluetooth) envie as teclas para o jogo
+    if (isTouch) {
+      locked = true; overlay.style.display = 'none'; document.body.classList.add('touch');
+      try { document.documentElement.requestFullscreen?.().catch(() => {}); } catch (e) {}
+    } else { document.body.classList.remove('touch'); cvs.requestPointerLock(); }
+  });
+  document.addEventListener('pointerlockchange', () => {
+    locked = document.pointerLockElement === cvs;
+    overlay.style.display = (locked || invEl.classList.contains('open')) ? 'none' : 'flex';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!locked) return;
+    yaw -= e.movementX * 0.0022;
+    pitch = Math.max(-1.55, Math.min(1.55, pitch - e.movementY * 0.0022));
+  });
+  // Teclado físico ou Bluetooth (celular/tablet): alguns navegadores deixam e.code vazio, então usa e.key como alternativa
+  const KEYFALLBACK = { w: 'KeyW', a: 'KeyA', s: 'KeyS', d: 'KeyD', e: 'KeyE', ' ': 'Space', shift: 'ShiftLeft',
+    1: 'Digit1', 2: 'Digit2', 3: 'Digit3', 4: 'Digit4', 5: 'Digit5', 6: 'Digit6', 7: 'Digit7', 8: 'Digit8' };
+  const keyCode = e => e.code || KEYFALLBACK[(e.key || '').toLowerCase()] || '';
+  addEventListener('keydown', e => {
+    const code = keyCode(e);
+    keys[code] = true;
+    if (code >= 'Digit1' && code <= 'Digit8') select(+code.slice(5) - 1);
+    if (code === 'KeyE' && !e.repeat) { if (invEl.classList.contains('open')) closeInv(); else if (locked) openInv(); }
+    if (code === 'Space') { e.preventDefault(); if (!e.repeat && locked) tapJump(); }
+  });
+  addEventListener('keyup', e => keys[keyCode(e)] = false);
+  // Se a página perder o foco (ou o teclado Bluetooth desconectar), solta todas as teclas para não ficar andando sozinho
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+  addEventListener('wheel', e => select((sel + (e.deltaY > 0 ? 1 : 7)) % 8));
+  addEventListener('contextmenu', e => e.preventDefault());
+
+  // ================= HOTBAR =================
+  const hotbar = document.getElementById('hotbar'), nameEl = document.getElementById('name');
+  const LIGHTER = 7;                                  // id do item "Isqueiro" em TYPES (não é bloco)
+  // Conteúdo da hotbar (8 slots): ids de TYPES, 0 = vazio. Salvo automaticamente.
+  const hot = (Array.isArray(saved.hot) && saved.hot.length === 8 && saved.hot.every(v => Number.isInteger(v) && v >= 0 && v < TYPES.length))
+    ? saved.hot.slice() : [1, 2, 3, 4, 5, 0, 0, 0];
+  let sel = 0;
+  const slots = [];
+  function drawSlot(k) { slots[k].style.backgroundImage = hot[k] ? `url(${icons[hot[k]]})` : 'none'; }
+  for (let k = 0; k < 8; k++) {
+    const s = document.createElement('div');
+    s.className = 'slot';
+    s.innerHTML = `<span>${k + 1}</span>`;
+    s.onclick = () => select(k);
+    // Toque direto no slot (o handler global de toque cancela o clique emulado)
+    s.addEventListener('touchstart', e => { select(k); e.preventDefault(); }, { passive: false });
+    hotbar.appendChild(s); slots.push(s); drawSlot(k);
+  }
+  // botão "+" no final da hotbar: abre o inventário
+  const plus = document.createElement('div');
+  plus.className = 'slot'; plus.id = 'plusSlot';
+  plus.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+  plus.onclick = openInv;
+  plus.addEventListener('touchstart', e => { openInv(); e.preventDefault(); }, { passive: false });
+  hotbar.appendChild(plus);
+  function select(i) {
+    sel = i;
+    slots.forEach((s, k) => s.classList.toggle('sel', k === i));
+    nameEl.textContent = hot[i] ? tr(TYPES[hot[i]].name) : '';
+    saved.slot = i; save();
+  }
+  select(saved.slot >= 0 && saved.slot < 8 ? saved.slot : 0);
+
+  // ===== Inventário (botão "+" ou tecla E): 12 slots por linha com todos os itens =====
+  const invGrid = document.getElementById('invGrid');
+  for (let k = 0; k < 12; k++) {
+    const d = document.createElement('div');
+    const item = k + 1 < TYPES.length ? k + 1 : 0;    // 1..8 = itens; o resto fica vazio
+    d.className = 'islot' + (item ? '' : ' empty');
+    if (item) { d.style.backgroundImage = `url(${icons[item]})`; d.onclick = () => pickItem(item); }
+    invGrid.appendChild(d);
+  }
+  // Escolher um item: vai para o slot selecionado; se já estiver em outro slot, os dois itens trocam de lugar
+  function pickItem(item) {
+    const k = hot.indexOf(item);
+    if (k !== sel) {
+      if (k >= 0) { hot[k] = hot[sel]; drawSlot(k); }     // troca: o item do slot selecionado vai para o lugar do escolhido
+      hot[sel] = item; drawSlot(sel);
+      saved.hot = hot.slice(); save();
+    }
+    select(sel); closeInv();
+  }
+  function openInv() {
+    invEl.classList.add('open');
+    locked = false; touchJump = false; joy.x = joy.y = 0; stopBreak();
+    if (document.exitPointerLock) document.exitPointerLock();
+  }
+  function closeInv() {
+    invEl.classList.remove('open');
+    if (isTouch) locked = true; else cvs.requestPointerLock();
+  }
+  document.getElementById('invClose').addEventListener('click', closeInv);
+  invEl.addEventListener('click', e => { if (e.target === invEl) closeInv(); });
+  // Se o navegador recusar travar o mouse de volta, mostra a tela inicial
+  document.addEventListener('pointerlockerror', () => { if (!locked && !invEl.classList.contains('open')) overlay.style.display = 'flex'; });
+  // Idioma padrão ao abrir o jogo: inglês (marca a opção nas duas listas e traduz tudo)
+  const initLang = LANGS.includes(saved.lang) ? saved.lang : 'en';
+  langItems.forEach(o => o.classList.toggle('sel', LANGS[[...o.parentNode.children].indexOf(o)] === initLang));
+  applyLang(initLang);
+  // Gráficos salvos (padrão: Alto)
+  const initGfx = saved.gfx >= 0 && saved.gfx <= 2 ? saved.gfx : 2;
+  gfxList.querySelectorAll('li').forEach((o, i) => o.classList.toggle('sel', i === initGfx));
+  if (initGfx !== 2) setGraphics(initGfx);
+
+  // ================= RAYCAST DE VOXELS (algoritmo DDA) =================
+  // Retorna o bloco atingido e a célula vazia imediatamente anterior (para colocar blocos)
+  function raycast(origin, dir, maxDist) {
+    let x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
+    const sx = Math.sign(dir.x), sy = Math.sign(dir.y), sz = Math.sign(dir.z);
+    const tD = [Math.abs(1 / dir.x), Math.abs(1 / dir.y), Math.abs(1 / dir.z)];
+    const tM = [
+      dir.x > 0 ? (x + 1 - origin.x) * tD[0] : (origin.x - x) * tD[0],
+      dir.y > 0 ? (y + 1 - origin.y) * tD[1] : (origin.y - y) * tD[1],
+      dir.z > 0 ? (z + 1 - origin.z) * tD[2] : (origin.z - z) * tD[2]];
+    let prev = null, t = 0;
+    while (t <= maxDist) {
+      if (getB(x, y, z)) return { hit: [x, y, z], prev };
+      prev = [x, y, z];
+      const a = tM[0] < tM[1] ? (tM[0] < tM[2] ? 0 : 2) : (tM[1] < tM[2] ? 1 : 2);
+      t = tM[a]; tM[a] += tD[a];
+      if (a === 0) x += sx; else if (a === 1) y += sy; else z += sz;
+    }
+    return null;
+  }
+  const lookDir = new THREE.Vector3();
+  function target() {
+    camera.getWorldDirection(lookDir);
+    return raycast(camera.position, lookDir, 6);
+  }
+
+  // Destruir (botão esquerdo) e construir (botão direito)
+  // Destruir = segurar o botão esquerdo por 1 s sobre o mesmo bloco · Colocar = clique (botão direito)
+  let breaking = false, breakBlock = null, breakStart = 0, broke = false;
+  function startBreak() { breaking = true; breakBlock = null; broke = false; }
+  function stopBreak() { breaking = false; breakBlock = null; }
+  function updateBreak(r, now) {
+    if (!locked) breaking = false;
+    if (!breaking) return;
+    if (!r) { breakBlock = null; return; }
+    const k = r.hit.join(',');
+    if (breakBlock !== k) { breakBlock = k; breakStart = now; }          // mirou outro bloco: reinicia o tempo
+    else if (now - breakStart >= 1000) { act(0); broke = true; breaking = false; breakBlock = null; }
+  }
+  addEventListener('mousedown', e => {
+    if (isTouch || !locked) return;
+    if (e.button === 0) startBreak(); else if (e.button === 2) act(2);
+  });
+  addEventListener('mouseup', e => { if (e.button === 0) stopBreak(); });
+  function act(button) {
+    if (!locked) return;
+    const r = target(); if (!r) return;
+    if (button === 0) {
+      const [x, y, z] = r.hit;
+      if (y > 0) { world[idx(x, y, z)] = 0; rebuild(x, z); saved.edits[idx(x, y, z)] = 0; save(); }       // camada y=0 é indestrutível
+    } else if (button === 2) {
+      const item = hot[sel];
+      if (!item) return;                                    // slot vazio
+      if (item === LIGHTER) { if (getB(r.hit[0], r.hit[1], r.hit[2]) === TNT) ignite(r.hit[0], r.hit[1], r.hit[2]); return; }
+      if (!r.prev) return;
+      const [x, y, z] = r.prev;
+      if (!inBounds(x, y, z)) return;
+      // Não permite colocar bloco dentro do próprio jogador
+      world[idx(x, y, z)] = item;
+      if (collides(player.pos)) world[idx(x, y, z)] = 0; else { rebuild(x, z); saved.edits[idx(x, y, z)] = item; save(); }
+    }
+  }
+
+  // ================= CONTROLES DE TOQUE =================
+  // Esquerda: joystick virtual · Direita: arrastar para olhar, toque = destruir, segurar = colocar
+  const joy = { x: 0, y: 0 }; let touchJump = false;
+  const joyEl = document.getElementById('joy'), knob = document.getElementById('knob');
+  const JR = 50;
+  let joyId = null, joyC = null, lookId = null, lookLast = null, lookMoved = 0, holdTimer = null, placed = false;
+  addEventListener('touchstart', e => {
+    if (!locked || !isTouch) return;
+    for (const t of e.changedTouches) {
+      if (t.target.closest && t.target.closest('#hotbar,.tbtn')) continue;
+      if (t.clientX < innerWidth * 0.4) {
+        if (joyId !== null) continue;
+        joyId = t.identifier; joyC = [t.clientX, t.clientY];
+        joyEl.style.display = 'block';
+        joyEl.style.left = (t.clientX - JR) + 'px'; joyEl.style.top = (t.clientY - JR) + 'px';
+        knob.style.transform = 'translate(0,0)';
+      } else if (lookId === null) {
+        lookId = t.identifier; lookLast = [t.clientX, t.clientY]; lookMoved = 0; startBreak();
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+  addEventListener('touchmove', e => {
+    if (!locked || !isTouch) return;
+    for (const t of e.changedTouches) {
+      if (t.identifier === joyId) {
+        let dx = t.clientX - joyC[0], dy = t.clientY - joyC[1];
+        const l = Math.hypot(dx, dy);
+        if (l > JR) { dx *= JR / l; dy *= JR / l; }
+        joy.x = dx / JR; joy.y = dy / JR;
+        knob.style.transform = `translate(${dx}px,${dy}px)`;
+      } else if (t.identifier === lookId) {
+        const dx = t.clientX - lookLast[0], dy = t.clientY - lookLast[1];
+        lookLast = [t.clientX, t.clientY]; lookMoved += Math.abs(dx) + Math.abs(dy);
+        yaw -= dx * 0.005;
+        pitch = Math.max(-1.55, Math.min(1.55, pitch - dy * 0.005));
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+  function touchEnd(e) {
+    for (const t of e.changedTouches) {
+      if (t.identifier === joyId) { joyId = null; joy.x = joy.y = 0; joyEl.style.display = 'none'; }
+      if (t.identifier === lookId) {
+        const wasBroke = broke; stopBreak();
+        if (e.type === 'touchend' && !wasBroke && lookMoved < 10) act(2); // toque rápido = colocar bloco (segurar 1 s = destruir)
+        lookId = null;
+      }
+    }
+  }
+  addEventListener('touchend', touchEnd);
+  addEventListener('touchcancel', touchEnd);
+  // Botões na tela
+  const bJump = document.getElementById('bJump'), bPause = document.getElementById('bPause');
+  // Voo: toque duplo no pulo liga/desliga (teclado: Espaço 2x; descer: Shift ou botão ↓)
+  let flying = false, lastJumpTap = 0, touchDown = false;
+  function tapJump() {
+    const n = performance.now();
+    if (n - lastJumpTap < 300) {
+      flying = !flying; player.vel.y = 0; lastJumpTap = 0;
+      document.body.classList.toggle('fly', flying);
+    } else lastJumpTap = n;
+  }
+  const bDown = document.getElementById('bDown');
+  bDown.addEventListener('touchstart', e => { touchDown = true; e.preventDefault(); }, { passive: false });
+  bDown.addEventListener('touchend', () => touchDown = false);
+  bDown.addEventListener('touchcancel', () => touchDown = false);
+  bJump.addEventListener('touchstart', e => { touchJump = true; tapJump(); e.preventDefault(); }, { passive: false });
+  bJump.addEventListener('touchend', () => touchJump = false);
+  bJump.addEventListener('touchcancel', () => touchJump = false);
+  bPause.addEventListener('touchstart', e => {
+    e.preventDefault(); locked = false; joy.x = joy.y = 0; touchJump = false; settings.classList.add('open');
+  }, { passive: false });
+
+  // ================= OVELHAS =================
+  // Luzes só para as ovelhas (os blocos usam material sem iluminação e não são afetados)
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x9a8f7a, 0.85));
+  const sunL = new THREE.DirectionalLight(0xfff4e0, 0.9); sunL.position.set(5, 10, 6); scene.add(sunL);
+
+  const SM = (c, r = 0.9) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: 0 });
+  const geoCache = {}, matCache = {};   // geometrias e materiais compartilhados entre os animais
+  const SB = (w, h, d, c) => {
+    const gk = w + ',' + h + ',' + d;
+    const g = geoCache[gk] || (geoCache[gk] = new THREE.BoxGeometry(w, h, d));
+    const m = matCache[c] || (matCache[c] = SM(c));
+    return new THREE.Mesh(g, m);
+  };
+  const norm = a => Math.atan2(Math.sin(a), Math.cos(a));
+  // altura do chão (topo do bloco mais alto) na coluna (x, z)
+  const groundY = (x, z) => {
+    const ix = Math.floor(x), iz = Math.floor(z);
+    for (let y = H - 1; y >= 0; y--) if (getB(ix, y, iz)) return y + 1;
+    return 1;
+  };
+
+  // Cria uma ovelha em (px, pz) e devolve a função que a anima a cada quadro
+  function makeSheep(px, pz) {
+    const sheep = new THREE.Group(); scene.add(sheep);   // olha para +z
+    const body = new THREE.Group(); sheep.add(body);
+    const FACE = 0x3b322c, WOOL = [0xffffff, 0xf5f2e8, 0xfbf8f0];
+    const core = SB(1.1, 0.9, 1.5, 0xffffff); core.position.y = 1.05; body.add(core);
+    function puff(x, y, z, s) {
+      const p = SB(s, s, s, WOOL[(Math.random() * 3) | 0]);
+      p.position.set(x, y, z);
+      p.rotation.set(Math.random() * 1.2, Math.random() * 1.2, Math.random() * 1.2); return p;
+    }
+    const head = new THREE.Group(); head.position.set(0, 1.3, 0.85); body.add(head);
+    head.add(SB(0.55, 0.5, 0.55, FACE));
+    const snout = SB(0.32, 0.2, 0.1, 0x5b4a3e); snout.position.set(0, -0.1, 0.3); head.add(snout);
+    head.add(puff(0, 0.3, -0.02, 0.34)); head.add(puff(0.14, 0.28, 0.1, 0.22)); head.add(puff(-0.14, 0.28, 0.1, 0.22));
+    [-1, 1].forEach(s => {
+      const e = SB(0.28, 0.12, 0.18, FACE); e.position.set(s * 0.36, 0.08, -0.02); e.rotation.z = s * -0.35; head.add(e);
+    });
+    const eyes = [];
+    [-1, 1].forEach(s => {
+      const g = new THREE.Group(); g.position.set(s * 0.14, 0.07, 0.28);
+      g.add(SB(0.12, 0.12, 0.04, 0xffffff));
+      const p = SB(0.06, 0.08, 0.04, 0x111111); p.position.z = 0.02; g.add(p);
+      head.add(g); eyes.push(g);
+    });
+    const tail = SB(0.22, 0.22, 0.22, 0xffffff); tail.position.set(0, 1.2, -0.85); body.add(tail);
+    const legs = [];
+    [[-1, 1], [1, 1], [-1, -1], [1, -1]].forEach(([sx, sz], i) => {
+      const g = new THREE.Group(); g.position.set(sx * 0.32, 0.6, sz * 0.5);
+      const l = SB(0.22, 0.5, 0.22, FACE); l.position.y = -0.25; g.add(l);
+      const hoof = SB(0.23, 0.1, 0.25, 0x1d1814); hoof.position.set(0, -0.55, 0.01); g.add(hoof);
+      g.userData.dir = (i == 0 || i == 3) ? 1 : -1; // pares diagonais
+      sheep.add(g); legs.push(g);
+    });
+
+    // vaga pelo mundo: anda até um ponto aleatório, para 3 s, repete
+    let state = 'walk', idleT = 0, phase = 0, heading = Math.random() * 6.28, headX = 0;
+    const off = Math.random() * 10;                      // defasa piscar/respirar entre as ovelhas
+    const goal = new THREE.Vector3();
+    function pick() {
+      for (let i = 0; i < 20; i++) {
+        goal.set(sheep.position.x + (Math.random() - 0.5) * 10, sheep.position.y, sheep.position.z + (Math.random() - 0.5) * 10);
+        goal.x = Math.max(2, Math.min(W - 2, goal.x)); goal.z = Math.max(2, Math.min(D - 2, goal.z));
+        if (goal.distanceTo(sheep.position) >= 2.5) break;
+      }
+    }
+    sheep.position.set(px, 0, pz);
+    sheep.position.y = groundY(px, pz);
+    pick();
+
+    return (dt, t0) => {
+      // longe do jogador (> 100 blocos): esconde e não atualiza, para manter o jogo leve
+      const fdx = sheep.position.x - player.pos.x, fdz = sheep.position.z - player.pos.z;
+      if (fdx * fdx + fdz * fdz > 10000) { sheep.visible = false; return; }
+      sheep.visible = true;
+      const t = t0 + off;
+      let swing = 0;
+      if (state === 'walk') {
+        const dx = goal.x - sheep.position.x, dz = goal.z - sheep.position.z;
+        const dist = Math.hypot(dx, dz);
+        const diff = norm(Math.atan2(dx, dz) - heading);
+        heading += Math.sign(diff) * Math.min(Math.abs(diff), 3 * dt);
+        if (Math.abs(diff) < 0.35) {
+          const step = Math.min(1.3 * dt, dist);
+          const nx = sheep.position.x + Math.sin(heading) * step, nz = sheep.position.z + Math.cos(heading) * step;
+          if (groundY(nx, nz) - sheep.position.y > 1.2) pick();   // degrau alto demais: escolhe outro destino
+          else { sheep.position.x = nx; sheep.position.z = nz; phase += dt * 9; swing = 1; }
+        }
+        if (dist < 0.08) { state = 'idle'; idleT = 0; }
+      } else {
+        idleT += dt;
+        if (idleT >= 3) { state = 'walk'; pick(); }
+      }
+      // acompanha o relevo (e blocos colocados/quebrados) suavemente
+      const gy = groundY(sheep.position.x, sheep.position.z);
+      sheep.position.y += (gy - sheep.position.y) * Math.min(1, dt * 10);
+      sheep.rotation.y = heading;
+      const sw = Math.sin(phase);
+      legs.forEach(l => {
+        const tgt = swing ? sw * 0.6 * l.userData.dir : 0;
+        l.rotation.x += (tgt - l.rotation.x) * Math.min(1, dt * 14);
+      });
+      body.position.y = swing ? Math.abs(sw) * 0.06 : 0;
+      body.rotation.z = swing ? sw * 0.03 : 0;
+      body.scale.y = 1 + Math.sin(t * 2) * 0.012;
+      const hx = state === 'idle' ? ((idleT % 1.5) < 0.9 ? 0.45 : 0) : Math.sin(phase * 2) * 0.04;
+      headX += (hx - headX) * Math.min(1, dt * 6); head.rotation.x = headX;
+      const bl = (t % 3.4) < 0.12 ? 0.1 : 1; eyes.forEach(e => e.scale.y = bl);
+      tail.rotation.z = Math.sin(t * (swing ? 10 : 3)) * 0.3;
+    };
+  }
+
+  // 100 ovelhas espalhadas aleatoriamente pelo mundo (longe do ponto inicial do jogador)
+  const sheepUpdaters = [];
+  for (let i = 0; i < 100; i++) {
+    let x, z;
+    do { x = 3 + Math.random() * (W - 6); z = 3 + Math.random() * (D - 6); }
+    while (Math.hypot(x - (W / 2 + 0.5), z - (D / 2 + 0.5)) < 4);
+    sheepUpdaters.push(makeSheep(x, z));
+  }
+  const updateSheep = (dt, t) => sheepUpdaters.forEach(f => f(dt, t));
+
+  // ================= GALINHAS =================
+  // Cria uma galinha em (px, pz) e devolve a função que a anima a cada quadro
+  function makeHen(px, pz) {
+    const hen = new THREE.Group(); scene.add(hen);   // olha para +z
+    const body = new THREE.Group(); hen.add(body);
+    const BROWN = 0x8b5a2b, WHITE = 0xffffff, RED = 0xd8302f, ORANGE = 0xf2a33a;
+    const core = SB(0.9, 0.8, 1.1, BROWN); core.position.y = 0.95; body.add(core);
+    [-1, 1].forEach(s => {
+      const w = SB(0.08, 0.5, 0.7, WHITE); w.position.set(s * 0.48, 0.95, -0.05); body.add(w);
+    });
+    const neck = SB(0.35, 0.5, 0.35, BROWN); neck.position.set(0, 1.3, 0.45); body.add(neck);
+    const head = new THREE.Group(); head.position.set(0, 1.55, 0.5); body.add(head);
+    head.add(SB(0.45, 0.45, 0.45, BROWN));
+    [-1, 1].forEach(s => {
+      const c = SB(0.04, 0.2, 0.22, WHITE); c.position.set(s * 0.225, -0.08, 0.04); head.add(c);
+    });
+    const comb = SB(0.1, 0.2, 0.3, RED); comb.position.set(0, 0.3, 0); head.add(comb);
+    const beak = SB(0.18, 0.1, 0.2, ORANGE); beak.position.set(0, -0.03, 0.3); head.add(beak);
+    const wattle = SB(0.08, 0.14, 0.06, RED); wattle.position.set(0, -0.15, 0.26); head.add(wattle);
+    const eyes = [];
+    [-1, 1].forEach(s => {
+      const e = SB(0.04, 0.09, 0.09, 0x111111); e.position.set(s * 0.235, 0.06, 0.1); head.add(e); eyes.push(e);
+    });
+    const tail = new THREE.Group(); tail.position.set(0, 1.3, -0.55); body.add(tail);
+    [[0, -0.3], [0.28, -0.2], [-0.28, -0.2]].forEach(([rz, rx]) => {
+      const f = SB(0.14, 0.55, 0.3, WHITE); f.position.y = 0.22;
+      const g = new THREE.Group(); g.add(f); g.rotation.set(rx, 0, rz); tail.add(g);
+    });
+    const legs = [];
+    [-1, 1].forEach((sx, i) => {
+      const g = new THREE.Group(); g.position.set(sx * 0.22, 0.55, 0.05);
+      const l = SB(0.1, 0.5, 0.1, ORANGE); l.position.y = -0.25; g.add(l);
+      const ft = SB(0.22, 0.06, 0.3, ORANGE); ft.position.set(0, -0.52, 0.08); g.add(ft);
+      g.userData.dir = i ? 1 : -1;
+      hen.add(g); legs.push(g);
+    });
+
+    // vaga pelo mundo: anda até um ponto aleatório, para 3 s, repete
+    let state = 'walk', idleT = 0, phase = 0, heading = Math.random() * 6.28, headX = 0;
+    const off = Math.random() * 10;                      // defasa piscar/respirar entre as galinhas
+    const goal = new THREE.Vector3();
+    function pick() {
+      for (let i = 0; i < 20; i++) {
+        goal.set(hen.position.x + (Math.random() - 0.5) * 10, hen.position.y, hen.position.z + (Math.random() - 0.5) * 10);
+        goal.x = Math.max(2, Math.min(W - 2, goal.x)); goal.z = Math.max(2, Math.min(D - 2, goal.z));
+        if (goal.distanceTo(hen.position) >= 2.5) break;
+      }
+    }
+    hen.position.set(px, 0, pz); hen.scale.setScalar(0.7);
+    hen.position.y = groundY(px, pz);
+    pick();
+
+    return (dt, t0) => {
+      // longe do jogador (> 100 blocos): esconde e não atualiza, para manter o jogo leve
+      const fdx = hen.position.x - player.pos.x, fdz = hen.position.z - player.pos.z;
+      if (fdx * fdx + fdz * fdz > 10000) { hen.visible = false; return; }
+      hen.visible = true;
+      const t = t0 + off;
+      let swing = 0;
+      if (state === 'walk') {
+        const dx = goal.x - hen.position.x, dz = goal.z - hen.position.z;
+        const dist = Math.hypot(dx, dz);
+        const diff = norm(Math.atan2(dx, dz) - heading);
+        heading += Math.sign(diff) * Math.min(Math.abs(diff), 3 * dt);
+        if (Math.abs(diff) < 0.35) {
+          const step = Math.min(1.3 * dt, dist);
+          const nx = hen.position.x + Math.sin(heading) * step, nz = hen.position.z + Math.cos(heading) * step;
+          if (groundY(nx, nz) - hen.position.y > 1.2) pick();   // degrau alto demais: escolhe outro destino
+          else { hen.position.x = nx; hen.position.z = nz; phase += dt * 9; swing = 1; }
+        }
+        if (dist < 0.08) { state = 'idle'; idleT = 0; }
+      } else {
+        idleT += dt;
+        if (idleT >= 3) { state = 'walk'; pick(); }
+      }
+      // acompanha o relevo (e blocos colocados/quebrados) suavemente
+      const gy = groundY(hen.position.x, hen.position.z);
+      hen.position.y += (gy - hen.position.y) * Math.min(1, dt * 10);
+      hen.rotation.y = heading;
+      const sw = Math.sin(phase);
+      legs.forEach(l => {
+        const tgt = swing ? sw * 0.6 * l.userData.dir : 0;
+        l.rotation.x += (tgt - l.rotation.x) * Math.min(1, dt * 14);
+      });
+      body.position.y = swing ? Math.abs(sw) * 0.06 : 0;
+      body.rotation.z = swing ? sw * 0.03 : 0;
+      body.scale.y = 1 + Math.sin(t * 2) * 0.012;
+      const hx = state === 'idle' ? ((idleT % 1.5) < 0.9 ? 0.45 : 0) : Math.sin(phase * 2) * 0.12;
+      headX += (hx - headX) * Math.min(1, dt * 6); head.rotation.x = headX;
+      const bl = (t % 3.4) < 0.12 ? 0.1 : 1; eyes.forEach(e => e.scale.y = bl);
+      tail.rotation.z = Math.sin(t * (swing ? 10 : 3)) * 0.3;
+    };
+  }
+
+  // 100 galinhas em pontos aleatórios do mundo (longe do ponto inicial do jogador)
+  const henUpdaters = [];
+  for (let i = 0; i < 100; i++) {
+    let x, z;
+    do { x = 3 + Math.random() * (W - 6); z = 3 + Math.random() * (D - 6); }
+    while (Math.hypot(x - (W / 2 + 0.5), z - (D / 2 + 0.5)) < 4);
+    henUpdaters.push(makeHen(x, z));
+  }
+  const updateHens = (dt, t) => henUpdaters.forEach(f => f(dt, t));
+
+  // ================= TNT (acende com o isqueiro: botão direito/toque rápido no TNT) =================
+  const TNT = 6, FUSE = 2, BLAST = 3;
+  const fuses = [];                                          // TNT acesos: { x, y, z, t, mesh }
+  const flashGeo = new THREE.BoxGeometry(1.02, 1.02, 1.02);
+  const flashMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55 });
+  function ignite(x, y, z, t = FUSE) {
+    if (fuses.some(f => f.x === x && f.y === y && f.z === z)) return;
+    const mesh = new THREE.Mesh(flashGeo, flashMat);
+    mesh.position.set(x + 0.5, y + 0.5, z + 0.5); scene.add(mesh);
+    fuses.push({ x, y, z, t, mesh });
+  }
+  function explode(cx, cy, cz) {
+    for (let dx = -BLAST; dx <= BLAST; dx++) for (let dy = -BLAST; dy <= BLAST; dy++) for (let dz = -BLAST; dz <= BLAST; dz++) {
+      if (dx * dx + dy * dy + dz * dz > BLAST * BLAST + 1) continue;
+      const x = cx + dx, y = cy + dy, z = cz + dz;
+      if (!inBounds(x, y, z) || y <= 0 || !world[idx(x, y, z)]) continue;   // camada y=0 é indestrutível
+      if (world[idx(x, y, z)] === TNT && (dx || dy || dz)) { ignite(x, y, z, 0.3); continue; }   // reação em cadeia
+      world[idx(x, y, z)] = 0; saved.edits[idx(x, y, z)] = 0;
+    }
+    // reconstrói os chunks atingidos (e os vizinhos da borda)
+    const c0x = Math.floor((cx - BLAST - 1) / CS), c1x = Math.floor((cx + BLAST + 1) / CS);
+    const c0z = Math.floor((cz - BLAST - 1) / CS), c1z = Math.floor((cz + BLAST + 1) / CS);
+    for (let a = c0x; a <= c1x; a++) for (let b = c0z; b <= c1z; b++)
+      if (a >= 0 && b >= 0 && a < NCX && b < NCZ && chunks.has(a + b * NCX)) buildChunk(a, b);
+    save();
+  }
+  function updateFuses(dt) {
+    for (let i = fuses.length - 1; i >= 0; i--) {
+      const f = fuses[i]; f.t -= dt;
+      f.mesh.visible = (((f.t * 5) | 0) % 2) === 0;          // pisca
+      if (f.t <= 0) {
+        scene.remove(f.mesh); fuses.splice(i, 1);
+        if (getB(f.x, f.y, f.z) === TNT) explode(f.x, f.y, f.z);
+      }
+    }
+  }
+
+  // ================= LOOP PRINCIPAL =================
+  const SPEED = 4.5, GRAVITY = 28, JUMP = 8.5;
+  let last = performance.now();
+  function loop(now) {
+    requestAnimationFrame(loop);
+    const dt = Math.min((now - last) / 1000, 0.05); last = now;
+
+    if (locked) {
+      // Direção de movimento relativa ao yaw
+      const f = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) - joy.y;
+      const s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + joy.x;
+      const len = Math.max(1, Math.hypot(f, s));
+      const sin = Math.sin(yaw), cos = Math.cos(yaw);
+      player.vel.x = (-sin * f + cos * s) / len * SPEED;
+      player.vel.z = (-cos * f - sin * s) / len * SPEED;
+      if ((keys.Space || touchJump) && player.onGround) { player.vel.y = JUMP; player.onGround = false; }
+    } else { player.vel.x = player.vel.z = 0; }
+    if (flying && locked) player.vel.y = (((keys.Space || touchJump) ? 1 : 0) - ((keys.ShiftLeft || keys.ShiftRight || touchDown) ? 1 : 0)) * 6;
+    else if (flying) player.vel.y = 0;
+    else player.vel.y -= GRAVITY * dt;
+
+    // Movimento e colisão separados por eixo (permite deslizar nas paredes)
+    for (const ax of ['x', 'y', 'z']) {
+      const old = player.pos[ax];
+      player.pos[ax] += player.vel[ax] * dt;
+      if (collides(player.pos)) {
+        player.pos[ax] = old;
+        if (ax === 'y') { player.onGround = player.vel.y < 0; }
+        player.vel[ax] = 0;
+      } else if (ax === 'y') player.onGround = false;
+    }
+
+    // Câmera nos "olhos" do jogador
+    camera.position.set(player.pos.x, player.pos.y + EYE, player.pos.z);
+    camera.rotation.set(pitch, yaw, 0, 'YXZ');
+
+    // Contorno do bloco mirado
+    const r = locked ? target() : null;
+    updateBreak(r, now);
+    outline.material.color.setHex(breaking && breakBlock ? 0xff2222 : 0x000000); // vermelho enquanto quebra
+    if (r) { outline.visible = true; outline.position.set(r.hit[0] + .5, r.hit[1] + .5, r.hit[2] + .5); }
+    else outline.visible = false;
+
+    document.body.classList.toggle('playing', locked && !isTouch);   // esconde o cursor do mouse durante o jogo
+    updateChunks();
+    updateFuses(dt);
+    updateSheep(dt, now / 1000);
+    updateHens(dt, now / 1000);
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
