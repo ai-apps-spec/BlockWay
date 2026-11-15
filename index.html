@@ -554,7 +554,6 @@
   const popEl = document.getElementById('pop'), popLangList = document.getElementById('popLangList');
   document.getElementById('popTranslate').addEventListener('click', () => popLangList.classList.toggle('open'));
   document.getElementById('popClose').addEventListener('click', () => popEl.classList.remove('open'));
-  popEl.addEventListener('click', e => { if (e.target === popEl) popEl.classList.remove('open'); });
   const langItems = [...langList.querySelectorAll('li'), ...homeLangList.querySelectorAll('li'), ...popLangList.querySelectorAll('li')];
   const i18nEls = [...document.querySelectorAll('#playBtn, #helpBtn, #helpBox h2, #helpBox h3, #helpBox li, #helpClose, #setTitle, #backHome, #langBtn span, #homeLangBtn span, #langList li, #homeLangList li, #gfxBtn span, #gfxList li, #invBox h2, #popTitle, #popNote, #popTranslate, #popLangList li')];
   function applyLang(code) {
