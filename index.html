@@ -9,6 +9,8 @@
   canvas { display: block; }
   /* Jogando com mouse: sem ponteiro na tela */
   body.playing, body.playing * { cursor: none !important; }
+  /* Clarão da explosão (só quando o TNT explode perto) */
+  #boomFlash { position: fixed; inset: 0; background: rgb(255,240,200); opacity: 0; pointer-events: none; }
   /* Mira central */
   #cross { position: fixed; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px; pointer-events: none; }
   #cross::before, #cross::after { content: ""; position: absolute; background: #fff; mix-blend-mode: difference; }
@@ -116,6 +118,7 @@
 </style>
 </head>
 <body>
+<div id="boomFlash"></div>
 <div id="cross"></div>
 <div id="name"></div>
 <div id="hotbar"></div>
@@ -346,10 +349,11 @@
 
   // ================= CENA / RENDERER =================
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x87ceeb);
+  scene.background = null;   // o céu (cor, sol e lua) é desenhado antes, numa cena separada
   scene.fog = new THREE.Fog(0x87ceeb, 25, 60);
   const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 200);
   const renderer = new THREE.WebGLRenderer({ antialias: false });
+  renderer.autoClear = false;   // o céu e o mundo são desenhados em duas passagens
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
   renderer.setSize(innerWidth, innerHeight);
   document.body.appendChild(renderer.domElement);
@@ -833,7 +837,7 @@
 
   // ================= OVELHAS =================
   // Luzes só para as ovelhas (os blocos usam material sem iluminação e não são afetados)
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x9a8f7a, 0.85));
+  const hemiL = new THREE.HemisphereLight(0xffffff, 0x9a8f7a, 0.85); scene.add(hemiL);
   const sunL = new THREE.DirectionalLight(0xfff4e0, 0.9); sunL.position.set(5, 10, 6); scene.add(sunL);
 
   const SM = (c, r = 0.9) => new THREE.MeshStandardMaterial({ color: c, roughness: r, metalness: 0 });
@@ -1058,6 +1062,164 @@
   }
   const updateHens = (dt, t) => henUpdaters.forEach(f => f(dt, t));
 
+  // ================= EFEITO 3D DE EXPLOSÃO =================
+  // Onda de choque (duas cascas), anel no chão, faíscas com rastro e clarão; cada TNT que explode cria o seu efeito.
+  const booms = [];
+  let boomShake = 0;                                        // tremor da câmera (soma dos efeitos próximos)
+  const boomFlashEl = document.getElementById('boomFlash');
+  const boomReduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const MAXS = 140;
+  const brand = (a, b) => a + Math.random() * (b - a);
+  const bPointMat = () => new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    uniforms: { uScale: { value: 1 } },
+    vertexShader: `attribute vec3 aCol; attribute float aSize; uniform float uScale; varying vec3 vC;
+      void main(){ vC=aCol; vec4 mv=modelViewMatrix*vec4(position,1.0);
+        gl_PointSize=aSize*uScale/max(-mv.z,1.0); gl_Position=projectionMatrix*mv; }`,
+    fragmentShader: `varying vec3 vC;
+      void main(){ float r=length(gl_PointCoord-0.5); float a=smoothstep(0.5,0.0,r);
+        gl_FragColor=vec4(vC*a*1.4,a); }`
+  });
+  const bShellMat = hex => new THREE.ShaderMaterial({
+    transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+    uniforms: { uA: { value: 1 }, uC: { value: new THREE.Color(hex) } },
+    vertexShader: `varying vec3 vN; varying vec3 vV;
+      void main(){ vN=normalize(normalMatrix*normal); vec4 mv=modelViewMatrix*vec4(position,1.0);
+        vV=normalize(-mv.xyz); gl_Position=projectionMatrix*mv; }`,
+    fragmentShader: `uniform float uA; uniform vec3 uC; varying vec3 vN; varying vec3 vV;
+      void main(){ float f=pow(1.0-abs(dot(normalize(vN),normalize(vV))),2.2);
+        gl_FragColor=vec4(uC*f*1.8, f*uA); }`
+  });
+  const boomSphereGeo = new THREE.SphereGeometry(1, 32, 22);
+  const boomTorusGeo = new THREE.TorusGeometry(1, 0.05, 8, 80);
+
+  // (x, y, z) = centro do bloco de TNT no mundo; o tamanho do TNT é 1 bloco
+  function spawnBoom(x, y, z) {
+    const b = { x, y, z, age: 0, size: 1, flash: 1, shake: boomReduce ? 0 : 12, objs: [], shells: [] };
+    const S = {
+      pos: new Float32Array(MAXS * 3), col: new Float32Array(MAXS * 3), siz: new Float32Array(MAXS),
+      vel: new Float32Array(MAXS * 3), life: new Float32Array(MAXS), decay: new Float32Array(MAXS),
+      lpos: new Float32Array(MAXS * 6), lcol: new Float32Array(MAXS * 6)
+    };
+    b.S = S;
+    [[0xffd890, 3.6, 44], [0xff6a1f, 2.3, 32]].forEach(([hex, k, dur]) => {
+      const m = new THREE.Mesh(boomSphereGeo, bShellMat(hex));
+      m.position.set(x, y, z); m.userData = { k, dur };
+      scene.add(m); b.shells.push(m); b.objs.push(m);
+    });
+    b.ring = new THREE.Mesh(boomTorusGeo, new THREE.MeshBasicMaterial({ color: 0xffc070, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    b.ring.rotation.x = -Math.PI / 2;                       // anel deitado no chão
+    b.ring.position.set(x, y - 0.45, z);
+    scene.add(b.ring); b.objs.push(b.ring);
+
+    const pg = new THREE.BufferGeometry();
+    pg.setAttribute('position', new THREE.BufferAttribute(S.pos, 3));
+    pg.setAttribute('aCol', new THREE.BufferAttribute(S.col, 3));
+    pg.setAttribute('aSize', new THREE.BufferAttribute(S.siz, 1));
+    b.sparkPts = new THREE.Points(pg, bPointMat()); b.sparkPts.frustumCulled = false;
+    scene.add(b.sparkPts); b.objs.push(b.sparkPts);
+
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(S.lpos, 3));
+    lg.setAttribute('color', new THREE.BufferAttribute(S.lcol, 3));
+    b.sparkLines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    b.sparkLines.frustumCulled = false;
+    scene.add(b.sparkLines); b.objs.push(b.sparkLines);
+
+    const fg = new THREE.BufferGeometry();
+    fg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3));
+    fg.setAttribute('aCol', new THREE.BufferAttribute(new Float32Array(3), 3));
+    fg.setAttribute('aSize', new THREE.BufferAttribute(new Float32Array(1), 1));
+    b.flashPts = new THREE.Points(fg, bPointMat()); b.flashPts.frustumCulled = false;
+    b.flashPts.position.set(x, y, z);
+    scene.add(b.flashPts); b.objs.push(b.flashPts);
+
+    const n = boomReduce ? 30 : MAXS, g = b.size / 44;
+    for (let i = 0; i < MAXS; i++) {
+      const o = i * 3;
+      if (i >= n) { S.life[i] = 0; continue; }
+      const zz = brand(-1, 1), a = brand(0, Math.PI * 2), rr = Math.sqrt(1 - zz * zz), sp = brand(3, 12) * g;
+      S.pos[o] = x; S.pos[o + 1] = y; S.pos[o + 2] = z;
+      S.vel[o] = Math.cos(a) * rr * sp; S.vel[o + 1] = Math.sin(a) * rr * sp + brand(0, 2.5) * g; S.vel[o + 2] = zz * sp * 0.6;
+      S.life[i] = 1; S.decay[i] = brand(.009, .022);
+      S.siz[i] = brand(5, 11) * g;
+      const t = Math.random();
+      S.col[o] = 1; S.col[o + 1] = 0.45 + 0.45 * t; S.col[o + 2] = 0.1 + 0.5 * t;
+    }
+    booms.push(b);
+  }
+
+  function disposeBoom(b) {
+    b.objs.forEach(o => {
+      scene.remove(o);
+      if (o.geometry !== boomSphereGeo && o.geometry !== boomTorusGeo) o.geometry.dispose();
+      o.material.dispose();
+    });
+  }
+
+  // dt em "quadros de 60 fps" (1 = 16,7 ms)
+  function updateBooms(dt) {
+    const us = renderer.domElement.height / (2 * Math.tan(camera.fov * Math.PI / 360));   // tamanho dos pontos em pixels
+    let shakeMax = 0, flashMax = 0;
+    for (let bi = booms.length - 1; bi >= 0; bi--) {
+      const b = booms[bi], S = b.S;
+      b.flash *= Math.pow(0.84, dt);
+      b.shake *= Math.pow(0.88, dt);
+      b.age += dt;
+      let alive = false;
+      b.shells.forEach(m => {
+        const t = b.age / m.userData.dur;
+        if (t >= 1) { m.visible = false; return; }
+        alive = true;
+        const e = 1 - Math.pow(1 - t, 3);
+        m.scale.setScalar(b.size * m.userData.k * (0.15 + 0.85 * e));
+        m.material.uniforms.uA.value = Math.pow(1 - t, 1.4);
+      });
+      const tr = b.age / 60;
+      if (tr < 1) {
+        alive = true;
+        const e = 1 - Math.pow(1 - tr, 3), r = b.size * 5.2 * (0.1 + 0.9 * e);
+        b.ring.scale.set(r, r, Math.max(0.01, r * 0.9 * (1 - tr)));
+        b.ring.material.opacity = Math.pow(1 - tr, 1.3);
+      } else b.ring.visible = false;
+      const gv = 0.22 * b.size / 44;
+      for (let i = 0; i < MAXS; i++) {
+        if (S.life[i] <= 0) continue;
+        const o = i * 3, l = i * 6, dr = Math.pow(0.965, dt);
+        S.vel[o] *= dr; S.vel[o + 1] = S.vel[o + 1] * dr - gv * dt; S.vel[o + 2] *= dr;
+        S.pos[o] += S.vel[o] * dt; S.pos[o + 1] += S.vel[o + 1] * dt; S.pos[o + 2] += S.vel[o + 2] * dt;
+        S.life[i] -= S.decay[i] * dt;
+        const L = Math.max(S.life[i], 0);
+        if (L <= 0) { S.siz[i] = 0; S.lcol.fill(0, l, l + 6); S.lpos.fill(0, l, l + 6); continue; }
+        alive = true;
+        S.siz[i] *= 0.995;
+        S.lpos[l] = S.pos[o]; S.lpos[l + 1] = S.pos[o + 1]; S.lpos[l + 2] = S.pos[o + 2];
+        S.lpos[l + 3] = S.pos[o] - S.vel[o] * 2.4; S.lpos[l + 4] = S.pos[o + 1] - S.vel[o + 1] * 2.4; S.lpos[l + 5] = S.pos[o + 2] - S.vel[o + 2] * 2.4;
+        S.lcol[l] = 1 * L; S.lcol[l + 1] = S.col[o + 1] * L; S.lcol[l + 2] = S.col[o + 2] * L;
+        S.lcol[l + 3] = 0.25 * L; S.lcol[l + 4] = 0.08 * L; S.lcol[l + 5] = 0;
+      }
+      const pa = b.sparkPts.geometry.attributes, la = b.sparkLines.geometry.attributes;
+      pa.position.needsUpdate = pa.aCol.needsUpdate = pa.aSize.needsUpdate = true;
+      la.position.needsUpdate = la.color.needsUpdate = true;
+      // clarão 3D no centro da explosão
+      const f = b.flashPts.geometry.attributes;
+      f.aSize.array[0] = b.size * 10 * b.flash; f.aCol.array[0] = b.flash; f.aCol.array[1] = 0.85 * b.flash; f.aCol.array[2] = 0.6 * b.flash;
+      f.aSize.needsUpdate = true; f.aCol.needsUpdate = true;
+      b.flashPts.visible = b.flash > 0.02;
+      b.sparkPts.material.uniforms.uScale.value = us; b.flashPts.material.uniforms.uScale.value = us;
+
+      // tremor da câmera e clarão na tela: mais fortes quanto mais perto da explosão
+      const dx = camera.position.x - b.x, dy = camera.position.y - b.y, dz = camera.position.z - b.z;
+      const fall = Math.max(0, 1 - Math.sqrt(dx * dx + dy * dy + dz * dz) / 24);
+      shakeMax = Math.max(shakeMax, b.shake / 12 * 0.35 * fall);
+      flashMax = Math.max(flashMax, b.flash * 0.4 * fall);
+
+      if (!alive && b.flash <= 0.02) { disposeBoom(b); booms.splice(bi, 1); }
+    }
+    boomShake = shakeMax;
+    boomFlashEl.style.opacity = flashMax > 0.01 ? flashMax.toFixed(3) : '0';
+  }
+
   // ================= TNT (acende com o isqueiro: botão direito/toque rápido no TNT) =================
   const TNT = 6, FUSE = 2, BLAST = 3;
   const fuses = [];                                          // TNT acesos: { x, y, z, t, mesh }
@@ -1070,6 +1232,7 @@
     fuses.push({ x, y, z, t, mesh });
   }
   function explode(cx, cy, cz) {
+    spawnBoom(cx + 0.5, cy + 0.5, cz + 0.5);               // efeito 3D da explosão
     for (let dx = -BLAST; dx <= BLAST; dx++) for (let dy = -BLAST; dy <= BLAST; dy++) for (let dz = -BLAST; dz <= BLAST; dz++) {
       if (dx * dx + dy * dy + dz * dz > BLAST * BLAST + 1) continue;
       const x = cx + dx, y = cy + dy, z = cz + dz;
@@ -1094,6 +1257,98 @@
       }
     }
   }
+
+  // ================= SOL, LUA E CICLO DIA/NOITE =================
+  // O dia dura 3 minutos e a noite dura 3 minutos (ciclo de 6 min). O jogo começa de dia.
+  const DAY_LEN = 180, CYCLE = DAY_LEN * 2;
+  let dayT = 0.02 * CYCLE;                        // começa logo após o nascer do sol
+  const skyScene = new THREE.Scene();
+  skyScene.background = new THREE.Color(0x87ceeb);
+  const skyCam = new THREE.PerspectiveCamera(75, 1, 0.1, 400);
+  skyScene.add(new THREE.HemisphereLight(0xffffff, 0xd8d4c8, 0.85));
+  const skyDl = new THREE.DirectionalLight(0xffffff, 0.7); skyDl.position.set(4, 6, 8); skyScene.add(skyDl);
+
+  const updateSky = (() => {
+    const SKY_R = 100, BODY_S = 5;                 // distância e escala do sol/lua no céu
+
+    // halo: brilho suave atrás do astro
+    function makeHalo(stops) {
+      const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+      const g = cv.getContext('2d'), gr = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+      stops.forEach(([o, c]) => gr.addColorStop(o, c));
+      g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(cv), transparent: true, depthWrite: false }));
+      skyScene.add(sp); return sp;
+    }
+
+    // SOL: cubo amarelo liso + halo dourado
+    const sunHalo = makeHalo([[0, 'rgba(255,214,60,0.85)'], [0.45, 'rgba(255,190,40,0.35)'], [1, 'rgba(255,190,40,0)']]);
+    const sun = new THREE.Group(); sun.rotation.set(0.45, 0.7, 0); sun.scale.setScalar(BODY_S); skyScene.add(sun);
+    const sunMat = new THREE.MeshStandardMaterial({ color: 0xffd800, emissive: 0xffb800, emissiveIntensity: 0.6, roughness: 0.6 });
+    sun.add(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), sunMat));
+
+    // LUA: cubo cinza-claro liso + crateras em blocos + halo azulado
+    const moonHalo = makeHalo([[0, 'rgba(200,220,255,0.9)'], [0.45, 'rgba(190,212,255,0.4)'], [1, 'rgba(190,212,255,0)']]);
+    const moon = new THREE.Group(); moon.rotation.set(0.45, 0.7, 0); moon.scale.setScalar(BODY_S); skyScene.add(moon);
+    const coreMat = new THREE.MeshStandardMaterial({ color: 0xdfe2e8, emissive: 0xb8c8e8, emissiveIntensity: 0.3, roughness: 0.85 });
+    const crMat = new THREE.MeshStandardMaterial({ color: 0xa4aab4, emissive: 0x8898b8, emissiveIntensity: 0.2, roughness: 0.9 });
+    const inMat = new THREE.MeshStandardMaterial({ color: 0x8d949f, emissive: 0x7888a8, emissiveIntensity: 0.2, roughness: 0.9 });
+    moon.add(new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), coreMat));
+    // [eixo, sinal, u, v, tamanho]
+    const craters = [
+      [2, 1, -0.45, 0.4, 0.6], [2, 1, 0.5, -0.4, 0.4], [2, 1, 0.45, 0.55, 0.25],
+      [0, 1, 0.3, 0.35, 0.55], [0, 1, -0.45, -0.45, 0.4], [0, 1, -0.5, 0.5, 0.22],
+      [1, 1, -0.4, -0.3, 0.55], [1, 1, 0.45, 0.45, 0.35], [1, 1, 0.5, -0.5, 0.22],
+      [2, -1, 0.2, 0.2, 0.5], [0, -1, -0.3, 0.3, 0.5], [1, -1, 0.3, -0.3, 0.5]
+    ];
+    craters.forEach(([a, sg, u, v, sz]) => {
+      const o = [0, 1, 2].filter(i => i !== a);
+      [[sz, 0.07, crMat], [sz * 0.5, 0.12, inMat]].forEach(([w, d, mat]) => {
+        const dims = [0, 0, 0]; dims[o[0]] = w; dims[o[1]] = w; dims[a] = d;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(dims[0], dims[1], dims[2]), mat);
+        const pp = [0, 0, 0]; pp[o[0]] = u; pp[o[1]] = v; pp[a] = sg * (1 + d / 2 - 0.005);
+        m.position.set(pp[0], pp[1], pp[2]); moon.add(m);
+      });
+    });
+
+    const DAY_SKY = new THREE.Color(0x87ceeb), NIGHT_SKY = new THREE.Color(0x070b1c);
+    const NIGHT_TINT = new THREE.Color(0.28, 0.32, 0.5), WHITE = new THREE.Color(1, 1, 1);
+    const skyCol = new THREE.Color(), tint = new THREE.Color(), dir = new THREE.Vector3();
+
+    return (dt, t) => {
+      dayT = (dayT + dt) % CYCLE;                              // 0..180 = dia, 180..360 = noite
+      const ang = (dayT / CYCLE) * Math.PI * 2;
+      dir.set(Math.cos(ang), Math.sin(ang), 0.25).normalize(); // direção do sol no céu (a lua fica oposta)
+      const up = dir.y;
+      const light = sstep(-0.2, 0.05, up);                     // 1 = pleno dia, 0 = noite fechada
+
+      // posição e brilho pulsante do sol e da lua
+      const p = 0.5 + 0.5 * Math.sin(t * 2);
+      sun.position.copy(dir).multiplyScalar(SKY_R);
+      sunHalo.position.copy(dir).multiplyScalar(SKY_R + 4);
+      moon.position.copy(dir).multiplyScalar(-SKY_R);
+      moonHalo.position.copy(dir).multiplyScalar(-(SKY_R + 4));
+      sun.visible = sunHalo.visible = up > -0.3;
+      moon.visible = moonHalo.visible = up < 0.3;
+      sunMat.emissiveIntensity = 0.35 + 0.75 * p;
+      sunHalo.scale.setScalar((9 + 2.2 * p) * BODY_S); sunHalo.material.opacity = 0.6 + 0.4 * p;
+      coreMat.emissiveIntensity = 0.15 + 0.5 * p;
+      crMat.emissiveIntensity = inMat.emissiveIntensity = 0.1 + 0.3 * p;
+      moonHalo.scale.setScalar((6.5 + 1.8 * p) * BODY_S); moonHalo.material.opacity = 0.55 + 0.45 * p;
+
+      // cor do céu e da névoa, escurecimento dos blocos e das luzes dos animais
+      skyCol.copy(NIGHT_SKY).lerp(DAY_SKY, light);
+      skyScene.background.copy(skyCol); scene.fog.color.copy(skyCol);
+      tint.copy(NIGHT_TINT).lerp(WHITE, light);
+      mats.forEach(m => { if (m) m.color.copy(tint); });
+      hemiL.intensity = 0.2 + 0.65 * light;
+      sunL.intensity = 0.1 + 0.8 * light;
+
+      // a câmera do céu acompanha a direção do olhar do jogador
+      skyCam.quaternion.copy(camera.quaternion);
+      skyCam.fov = camera.fov; skyCam.aspect = camera.aspect; skyCam.updateProjectionMatrix();
+    };
+  })();
 
   // ================= LOOP PRINCIPAL =================
   const SPEED = 4.5, GRAVITY = 28, JUMP = 8.5;
@@ -1129,6 +1384,9 @@
 
     // Câmera nos "olhos" do jogador
     camera.position.set(player.pos.x, player.pos.y + EYE, player.pos.z);
+    if (boomShake > 0.001) {                                   // tremor causado por explosões próximas
+      camera.position.x += (Math.random() - 0.5) * boomShake; camera.position.y += (Math.random() - 0.5) * boomShake; camera.position.z += (Math.random() - 0.5) * boomShake;
+    }
     camera.rotation.set(pitch, yaw, 0, 'YXZ');
 
     // Contorno do bloco mirado
@@ -1141,8 +1399,12 @@
     document.body.classList.toggle('playing', locked && !isTouch);   // esconde o cursor do mouse durante o jogo
     updateChunks();
     updateFuses(dt);
+    updateBooms(dt * 60);
     updateSheep(dt, now / 1000);
     updateHens(dt, now / 1000);
+    updateSky(dt, now / 1000);
+    renderer.render(skyScene, skyCam);          // céu (cor, sol e lua) por trás de tudo
+    renderer.clearDepth();
     renderer.render(scene, camera);
   }
   requestAnimationFrame(loop);
